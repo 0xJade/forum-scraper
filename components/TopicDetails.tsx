@@ -41,7 +41,7 @@ export default function TopicDetails({
     };
 
     loadTopicDetails();
-  }, [topicId]);
+  }, [topicId, forumBaseUrl]);
 
   if (loading) {
     return <LoadingSpinner />;

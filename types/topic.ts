@@ -16,7 +16,7 @@ export interface TopicFull {
   views: number;
   like_count: number;
   tags: string[];
-  [key: string]: any; // Allow other fields from API
+  [key: string]: unknown; // Allow other fields from API (type-safe)
 }
 
 export interface User {
@@ -24,13 +24,13 @@ export interface User {
   username: string;
   name: string;
   avatar_template: string;
-  [key: string]: any;
+  [key: string]: unknown; // Allow other fields from API (type-safe)
 }
 
 export interface ForumResponse {
   users: User[];
-  primary_groups: any[];
-  flair_groups: any[];
+  primary_groups: unknown[]; // Groups structure varies by forum
+  flair_groups: unknown[]; // Flair groups structure varies by forum
   topic_list: {
     can_create_topic: boolean;
     more_topics_url: string;
@@ -48,7 +48,7 @@ export interface Post {
   created_at: string;
   cooked: string;
   post_number: number;
-  [key: string]: any;
+  [key: string]: unknown; // Allow other fields from API (type-safe)
 }
 
 export interface TopicDetailsResponse {
@@ -66,7 +66,7 @@ export interface TopicDetailsResponse {
   views: number;
   like_count: number;
   tags: string[];
-  [key: string]: any;
+  [key: string]: unknown; // Allow other fields from API (type-safe)
 }
 
 export interface TopicStatistics {
