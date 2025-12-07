@@ -3,11 +3,18 @@
 import { useState } from 'react';
 import { DAOS, DAOConfig, getDefaultDays } from '@/config/daos';
 import DAOSelector from '@/components/DAOSelector';
+import MultiDAOSelector from '@/components/MultiDAOSelector';
 import TopicList from '@/components/TopicList';
 import TopicDetails from '@/components/TopicDetails';
+import EcosystemSummaryView from '@/components/EcosystemSummaryView';
+import { PostForAnalysis } from '@/types/ai-summary';
+
+type ViewMode = 'single' | 'multi';
 
 export default function Home() {
+  const [viewMode, setViewMode] = useState<ViewMode>('multi');
   const [selectedDAO, setSelectedDAO] = useState<DAOConfig | null>(null);
+  const [selectedDAOs, setSelectedDAOs] = useState<DAOConfig[]>([]);
   const [selectedTopicId, setSelectedTopicId] = useState<number | null>(null);
   const [selectedForumBaseUrl, setSelectedForumBaseUrl] = useState<string | null>(null);
 
@@ -28,8 +35,18 @@ export default function Home() {
 
   const handleBackToSelector = () => {
     setSelectedDAO(null);
+    setSelectedDAOs([]);
     setSelectedTopicId(null);
     setSelectedForumBaseUrl(null);
+  };
+
+  const handlePostClick = (post: PostForAnalysis) => {
+    setSelectedTopicId(post.topicId);
+    // Find the DAO that this post belongs to
+    const postDAO = selectedDAOs.find((dao) => dao.displayName === post.dao);
+    if (postDAO) {
+      setSelectedForumBaseUrl(postDAO.baseUrl);
+    }
   };
 
   // Show topic details if a topic is selected
@@ -47,8 +64,23 @@ export default function Home() {
     );
   }
 
-  // Show topic list if a DAO is selected
-  if (selectedDAO && selectedForumBaseUrl) {
+  // Show multi-DAO ecosystem summary view
+  if (viewMode === 'multi' && selectedDAOs.length > 0) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+        <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+          <EcosystemSummaryView
+            selectedDAOs={selectedDAOs}
+            onBack={handleBackToSelector}
+            onPostClick={handlePostClick}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Show topic list if a single DAO is selected
+  if (viewMode === 'single' && selectedDAO && selectedForumBaseUrl) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
         <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
@@ -109,19 +141,70 @@ export default function Home() {
 
         <main className="mx-auto max-w-2xl">
           <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-xl dark:border-gray-700 dark:bg-gray-800">
-            <DAOSelector
-              daos={DAOS}
-              selectedDAO={selectedDAO}
-              onSelect={handleDAOSelect}
-            />
+            {/* Mode Toggle */}
+            <div className="mb-6 flex gap-2 rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-gray-700 dark:bg-gray-900">
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode('multi');
+                  setSelectedDAO(null);
+                  setSelectedDAOs([]);
+                }}
+                className={`flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                  viewMode === 'multi'
+                    ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-800 dark:text-gray-100'
+                    : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
+                }`}
+              >
+                Multi-DAO Analysis
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode('single');
+                  setSelectedDAOs([]);
+                  setSelectedDAO(null);
+                }}
+                className={`flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                  viewMode === 'single'
+                    ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-800 dark:text-gray-100'
+                    : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
+                }`}
+              >
+                Single DAO
+              </button>
+            </div>
 
-            {selectedDAO && (
+            {viewMode === 'multi' ? (
+              <MultiDAOSelector
+                daos={DAOS}
+                selectedDAOs={selectedDAOs}
+                onSelectionChange={setSelectedDAOs}
+              />
+            ) : (
+              <DAOSelector
+                daos={DAOS}
+                selectedDAO={selectedDAO}
+                onSelect={handleDAOSelect}
+              />
+            )}
+
+            {viewMode === 'single' && selectedDAO && (
               <div className="mt-6 rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20">
                 <p className="text-sm text-blue-800 dark:text-blue-300">
                   <strong>Selected:</strong> {selectedDAO.displayName}
                 </p>
                 <p className="mt-1 text-xs text-blue-600 dark:text-blue-400">
                   Click outside the dropdown or select a different DAO to change your selection.
+                </p>
+              </div>
+            )}
+
+            {viewMode === 'multi' && selectedDAOs.length > 0 && (
+              <div className="mt-6 rounded-lg bg-green-50 p-4 dark:bg-green-900/20">
+                <p className="text-sm text-green-800 dark:text-green-300">
+                  <strong>{selectedDAOs.length} DAO{selectedDAOs.length !== 1 ? 's' : ''} selected.</strong> Click
+                  &quot;Generate Ecosystem Summary&quot; after selecting DAOs to analyze.
                 </p>
               </div>
             )}
@@ -145,7 +228,11 @@ export default function Home() {
                       d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                     />
                   </svg>
-                  <span>Select a DAO from the dropdown above</span>
+                  <span>
+                    {viewMode === 'multi'
+                      ? 'Select one or more DAOs from the checkboxes above'
+                      : 'Select a DAO from the dropdown above'}
+                  </span>
                 </li>
                 <li className="flex items-start gap-2">
                   <svg
@@ -161,7 +248,11 @@ export default function Home() {
                       d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                     />
                   </svg>
-                  <span>View all posts and topics from the last 7 days</span>
+                  <span>
+                    {viewMode === 'multi'
+                      ? 'Generate AI-powered summary with intelligent categorization'
+                      : 'View all posts and topics from the last 7 days'}
+                  </span>
                 </li>
                 <li className="flex items-start gap-2">
                   <svg

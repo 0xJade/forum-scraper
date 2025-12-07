@@ -1,5 +1,6 @@
 import { Topic, TopicDetailsResponse, TopicStatistics } from '@/types/topic';
 import { DAOConfig } from '@/config/daos';
+import { SummaryRequest, AISummary } from '@/types/ai-summary';
 
 /**
  * Client-side API utility functions
@@ -96,6 +97,37 @@ export async function fetchTopicDetails(
       throw error;
     }
     throw new Error('An unexpected error occurred while fetching topic details');
+  }
+}
+
+/**
+ * Generate AI summary from posts
+ * @param request - Summary request with posts and DAO information
+ */
+export async function generateSummary(request: SummaryRequest): Promise<AISummary> {
+  try {
+    const response = await fetch('/api/summarize', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(
+        errorData.error || `Failed to generate summary: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const data: AISummary = await response.json();
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('An unexpected error occurred while generating summary');
   }
 }
 
