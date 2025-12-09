@@ -23,16 +23,24 @@ interface EcosystemSummaryViewProps {
   onPostClick?: (post: PostForAnalysis) => void;
 }
 
+interface DAOSummary {
+  dao: DAOConfig;
+  posts: PostForAnalysis[];
+  summary: AISummary | null;
+  loading: boolean;
+  error: string | null;
+}
+
 export default function EcosystemSummaryView({
   selectedDAOs,
   onBack,
   onPostClick,
 }: EcosystemSummaryViewProps) {
-  const [posts, setPosts] = useState<PostForAnalysis[]>([]);
+  const [allPosts, setAllPosts] = useState<PostForAnalysis[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [aiSummary, setAiSummary] = useState<AISummary | null>(null);
-  const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [daoSummaries, setDaoSummaries] = useState<Map<string, DAOSummary>>(new Map());
+  const [generatingSummaries, setGeneratingSummaries] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [selectedCategories, setSelectedCategories] = useState<CategoryType[]>(
     CATEGORIES.map((cat) => cat.id)
@@ -42,7 +50,8 @@ export default function EcosystemSummaryView({
   useEffect(() => {
     const loadAllPosts = async () => {
       if (selectedDAOs.length === 0) {
-        setPosts([]);
+        setAllPosts([]);
+        setDaoSummaries(new Map());
         setLoading(false);
         return;
       }
@@ -77,7 +86,21 @@ export default function EcosystemSummaryView({
           }
         }
 
-        setPosts(allPosts);
+        setAllPosts(allPosts);
+        
+        // Initialize DAO summaries map
+        const initialSummaries = new Map<string, DAOSummary>();
+        selectedDAOs.forEach((dao) => {
+          const daoPosts = allPosts.filter((post) => post.dao === dao.displayName);
+          initialSummaries.set(dao.id, {
+            dao,
+            posts: daoPosts,
+            summary: null,
+            loading: false,
+            error: null,
+          });
+        });
+        setDaoSummaries(initialSummaries);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load posts');
       } finally {
@@ -89,39 +112,85 @@ export default function EcosystemSummaryView({
   }, [selectedDAOs]);
 
   const handleGenerateSummary = useCallback(async () => {
-    if (posts.length === 0) return;
+    if (allPosts.length === 0) return;
 
     try {
-      setGeneratingSummary(true);
+      setGeneratingSummaries(true);
       setSummaryError(null);
 
-      const daoNames = selectedDAOs.map((dao) => dao.displayName);
       const dateRange = {
         start: new Date(Date.now() - getDefaultDays() * 24 * 60 * 60 * 1000).toISOString(),
         end: new Date().toISOString(),
       };
 
-      const summary = await generateSummary({
-        posts,
-        daos: daoNames,
-        dateRange,
+      // Generate summary for each DAO separately
+      const summaryPromises = Array.from(daoSummaries.values()).map(async (daoSummary) => {
+        if (daoSummary.posts.length === 0) {
+          // No posts for this DAO, skip
+          return { daoId: daoSummary.dao.id, summary: null, error: null };
+        }
+
+        try {
+          // Update loading state for this DAO
+          setDaoSummaries((prev) => {
+            const updated = new Map(prev);
+            const existing = updated.get(daoSummary.dao.id);
+            if (existing) {
+              updated.set(daoSummary.dao.id, { ...existing, loading: true, error: null });
+            }
+            return updated;
+          });
+
+          const summary = await generateSummary({
+            posts: daoSummary.posts,
+            daos: [daoSummary.dao.displayName],
+            dateRange,
+          });
+
+          return { daoId: daoSummary.dao.id, summary, error: null };
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : 'Failed to generate summary';
+          return { daoId: daoSummary.dao.id, summary: null, error: errorMsg };
+        }
       });
 
-      setAiSummary(summary);
-      
-      // Auto-select all categories that have posts
-      const categoriesWithPosts = summary.categories
-        .filter((cat) => cat.posts.length > 0)
-        .map((cat) => cat.category);
-      setSelectedCategories(categoriesWithPosts);
-    } catch (err) {
-      setSummaryError(err instanceof Error ? err.message : 'Failed to generate summary');
-    } finally {
-      setGeneratingSummary(false);
-    }
-  }, [posts, selectedDAOs]);
+      const results = await Promise.all(summaryPromises);
 
-  // Calculate category counts from AI summary or posts
+      // Update summaries with results
+      setDaoSummaries((prev) => {
+        const updated = new Map(prev);
+        results.forEach(({ daoId, summary, error }) => {
+          const existing = updated.get(daoId);
+          if (existing) {
+            updated.set(daoId, {
+              ...existing,
+              summary,
+              loading: false,
+              error: error || null,
+            });
+          }
+        });
+        return updated;
+      });
+
+      // Auto-select all categories that have posts across all DAOs
+      const allCategoriesWithPosts = new Set<CategoryType>();
+      results.forEach(({ summary }) => {
+        if (summary) {
+          summary.categories
+            .filter((cat) => cat.posts.length > 0)
+            .forEach((cat) => allCategoriesWithPosts.add(cat.category));
+        }
+      });
+      setSelectedCategories(Array.from(allCategoriesWithPosts));
+    } catch (err) {
+      setSummaryError(err instanceof Error ? err.message : 'Failed to generate summaries');
+    } finally {
+      setGeneratingSummaries(false);
+    }
+  }, [allPosts, daoSummaries]);
+
+  // Calculate category counts across all DAO summaries
   const categoryCounts = useMemo(() => {
     const counts: Record<CategoryType, number> = {
       governance: 0,
@@ -134,14 +203,20 @@ export default function EcosystemSummaryView({
       meta: 0,
     };
 
-    if (aiSummary) {
-      aiSummary.categories.forEach((cat) => {
-        counts[cat.category] = cat.count;
-      });
-    }
+    daoSummaries.forEach((daoSummary) => {
+      if (daoSummary.summary) {
+        daoSummary.summary.categories.forEach((cat) => {
+          counts[cat.category] += cat.count;
+        });
+      }
+    });
 
     return counts;
-  }, [aiSummary]);
+  }, [daoSummaries]);
+
+  // Check if any summaries have been generated
+  const hasAnySummary = Array.from(daoSummaries.values()).some((s) => s.summary !== null);
+  const isGeneratingAny = Array.from(daoSummaries.values()).some((s) => s.loading);
 
   const handleToggleCategory = (category: CategoryType) => {
     setSelectedCategories((prev) => {
@@ -173,11 +248,11 @@ export default function EcosystemSummaryView({
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-            Multi-DAO Ecosystem Analysis
+            DAO Analysis
           </h1>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            {selectedDAOs.length} DAO{selectedDAOs.length !== 1 ? 's' : ''} selected • {posts.length}{' '}
-            post{posts.length !== 1 ? 's' : ''} loaded
+            {selectedDAOs.length} DAO{selectedDAOs.length !== 1 ? 's' : ''} selected • {allPosts.length}{' '}
+            post{allPosts.length !== 1 ? 's' : ''} loaded
           </p>
         </div>
         <button
@@ -189,11 +264,11 @@ export default function EcosystemSummaryView({
       </div>
 
       {/* Summary Generator */}
-      {!aiSummary && (
+      {!hasAnySummary && (
         <SummaryGenerator
           onGenerate={handleGenerateSummary}
-          isGenerating={generatingSummary}
-          postCount={posts.length}
+          isGenerating={generatingSummaries}
+          postCount={allPosts.length}
         />
       )}
 
@@ -205,40 +280,100 @@ export default function EcosystemSummaryView({
         />
       )}
 
-      {/* AI Summary Card */}
-      {aiSummary && (
+      {/* DAO Summaries - Display each DAO's summary separately */}
+      {hasAnySummary && (
         <>
-          <AISummaryCard summary={aiSummary} />
-
-          {/* Category Filter */}
+          {/* Category Filter - Global across all DAOs */}
           <CategoryFilter
             selectedCategories={selectedCategories}
             onToggleCategory={handleToggleCategory}
             categoryCounts={categoryCounts}
           />
 
-          {/* Categorized Post List */}
-          <CategorizedPostList
-            categories={aiSummary.categories}
-            selectedCategories={selectedCategories}
-            onPostClick={onPostClick}
-          />
+          {/* Individual DAO Summary Sections */}
+          <div className="space-y-8">
+            {Array.from(daoSummaries.values()).map((daoSummary) => {
+              if (!daoSummary.summary && !daoSummary.loading && daoSummary.error === null) {
+                // Skip DAOs with no posts
+                if (daoSummary.posts.length === 0) return null;
+              }
+
+              return (
+                <div
+                  key={daoSummary.dao.id}
+                  className="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800"
+                >
+                  {/* DAO Header */}
+                  <div className="border-b border-gray-200 bg-gray-50 px-6 py-4 dark:border-gray-700 dark:bg-gray-900">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                          {daoSummary.dao.displayName}
+                        </h2>
+                        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                          {daoSummary.posts.length} post{daoSummary.posts.length !== 1 ? 's' : ''}
+                          {daoSummary.dao.description && ` • ${daoSummary.dao.description}`}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* DAO Content */}
+                  <div className="p-6">
+                    {daoSummary.loading && (
+                      <div className="py-8 text-center">
+                        <LoadingSpinner />
+                        <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+                          Generating summary for {daoSummary.dao.displayName}...
+                        </p>
+                      </div>
+                    )}
+
+                    {daoSummary.error && (
+                      <ErrorMessage
+                        message={`Failed to generate summary for ${daoSummary.dao.displayName}: ${daoSummary.error}`}
+                        onRetry={handleGenerateSummary}
+                      />
+                    )}
+
+                    {daoSummary.summary && (
+                      <div className="space-y-6">
+                        <AISummaryCard summary={daoSummary.summary} />
+
+                        <CategorizedPostList
+                          categories={daoSummary.summary.categories}
+                          selectedCategories={selectedCategories}
+                          onPostClick={onPostClick}
+                        />
+                      </div>
+                    )}
+
+                    {!daoSummary.summary && !daoSummary.loading && daoSummary.error === null && daoSummary.posts.length === 0 && (
+                      <div className="py-8 text-center text-sm text-gray-600 dark:text-gray-400">
+                        No posts found for {daoSummary.dao.displayName}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
 
           {/* Regenerate Button */}
           <div className="flex justify-center">
             <button
               onClick={handleGenerateSummary}
-              disabled={generatingSummary}
+              disabled={generatingSummaries || isGeneratingAny}
               className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
-              Regenerate Summary
+              Regenerate All Summaries
             </button>
           </div>
         </>
       )}
 
       {/* No Posts Message */}
-      {posts.length === 0 && !loading && (
+      {allPosts.length === 0 && !loading && (
         <div className="rounded-lg border border-gray-200 bg-gray-50 p-8 text-center dark:border-gray-700 dark:bg-gray-800">
           <p className="text-gray-600 dark:text-gray-400">
             No posts found for the selected DAOs. Try selecting different DAOs or adjusting the time range.
